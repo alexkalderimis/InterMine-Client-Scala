@@ -1,10 +1,7 @@
 package org.intermine.client
 
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
-import scala.util.Sorting;
+import org.junit.Assert
+import org.junit.Test
 
 class ServiceTest2() {
 
