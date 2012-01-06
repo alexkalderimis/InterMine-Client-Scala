@@ -12,12 +12,11 @@ import org.intermine.client.query.Joins._
 import org.intermine.client.query.Sorting._
 import org.intermine.client.query.constraint._
 import org.intermine.client.Service
-
 import org.intermine.client.query.constraint.NonEmptyTree
 import org.intermine.client.query.constraint.LogicalTree._
-
 import scalaz._
-
+import Validation.Monad._
+import scala.collection.mutable.Stack
 
 class Query(
     val service: Service, 
@@ -62,11 +61,30 @@ class Query(
     			else Left(orderPath + "(" + fromClass + ") is not on a selected class"))
   } yield new Query(service, root, views, sortOrder ++ Seq((orderPath, direction)), subclasses, constraints, join)
   
+  def orderBy(pathString: String, dir: Any): Validation[String, Query] = Sorting.values.find(v => v.toString == dir.toString.toUpperCase) match {
+      case None => Failure(dir + " is not a valid direction")
+      case Some(direction) => orderBy(pathString, direction)
+  }
+  
   /** 
    * Add a series of sort-order and direction pairs to the query.
    */
-  def orderBy(soes: (String, SortDirection)*): Validation[String, Query] = {
-    soes.foldLeft(validation[String, Query](Right(this)))((v, soe) => soe match { case (p, d) => v.flatMap(q => q.orderBy(p, d))})
+  def orderBy(soes: (String, Any)*): Validation[String, Query] = {
+    val withDirections: Validation[String, Seq[(String, SortDirection)]] = soes match {
+      case os: Seq[(String, SortDirection)] => Success(os)
+      case os: Seq[(String, String)] => os.foldLeft(Success(Seq()):Validation[String, Seq[(String, SortDirection)]])((state, pair) => state.fold(
+        e => e.fail,
+        s => pair match { case (p, d) => {
+        	Sorting.values.find(v => v.toString == d.toUpperCase) match {
+              case None => Failure(d + " is not a valid direction")
+              case Some(dir) => Success(s ++ Seq((p, dir)))
+            }
+        }}
+      ))
+      case _ => Failure("Can only handles sequences of type Seq[(String, String)], or Seq[(String, SortDirection)]")
+    }
+    val seed: Validation[String, Query] = Success(this)
+    soes.foldLeft(seed)((v, soe) => soe match { case (p, d) => v.flatMap(q => q.orderBy(p, d))})
   }
   	
   def selectsFrom(path: Path): Boolean = views.map(v => v.parent.fold(_ => false, p => p == path)).reduce(_ || _)
@@ -170,9 +188,144 @@ class Query(
 }
 
 object Query {
+  
+  import Scalaz._
+  
+  def fromXML(s: Service, src: String): Validation[String, Query] = {
+    val xml = XML.loadString(src)
+    fromXML(s, xml)
+  }
+  
+  def fromXML(s: Service, xml: Elem): Validation[String, Query] = {
+    // Parse out info
+    val query = xml
+    val views = (query \ "@view").text.split(" ")
+    val so = (query \ "@sortOrder").text.split(" ")
+    val constraintLogic = (query \ "@constraintLogic").text
+    val modelName = (query \ "@model").text
+    val outerjoins = for (e <- (query \ "join") if (e \ "@style").text == "OUTER") yield (e \ "@path").text
+    val subclassConstraints = for (e <-(query \ "constraint") if !e.attribute("type").isEmpty) yield ((e \ "@path").text, (e\"@type").text)  
+    val logicalConstraints  = for (e <-(query \ "constraint") if e.attribute("type").isEmpty) yield e
+    
+    // Construct the query
+    val start = if (views.isEmpty) Failure("views are empty") else Success(views.first.split("\\.").first) >>= (r => s from r)
+    val subclassed = subclassConstraints.foldLeft(start)((v, scc) => v >>= (q => scc match { case (p, t) => q.subclassing(p, t)}))
+    val withViews  = subclassed >>= (_.select(views:_*))
+    val withOrder  = so match {
+      case Array()    => withViews
+      case Array(soe) => withViews >>= (_.orderBy(soe))
+      case sos if sos.size % 2 == 0 => {
+        var i = (0 until sos.size).iterator
+        val (evens, odds) = sos.partition(x => i.next() % 2 == 0)
+        withViews >>= (_.orderBy(evens.zip(odds):_*))
+      }
+      case _ => Failure("Sort order has odd number of elements")
+    }
+    val joined = outerjoins.foldLeft(withOrder)((v, oj) => v >>= (_.outerjoin(oj)))
+    val tree = toTree(constraintLogic)
+    joined
+  }
+  
+  /**
+   * Parse a string such as "A and (B or C) and (D or E or F)" to a valid logic tree.
+   */
+  def toTree(logic: String): Validation[String, LogicalTree[Char]] = {
+    // Variables
+    var needsOperator          = false
+    var notExpectingAnOperator = true
+    var opBuf = new StringBuffer()
+    var nodesAtExprStart = Map(0 -> 0)
+    var depth = 0
+    // State
+    val nodes: Stack[NonEmptyTree[Char]] = new Stack()
+    val ops: Stack[BooleanOperator.BooleanOperator] = new Stack()
+    val validCodes = 'A' to 'Z'
+    // Helper closures
+    def addNode(n: NonEmptyTree[Char]) = {nodes.push(n); needsOperator = nodes.size % 2 == 1}
+    def addOp(o: BooleanOperator.BooleanOperator) = {ops.push(o); needsOperator = false}
+    def endOfExpr(): Validation[String, Unit] = {
+        if (nodes.size == 1 && ops.isEmpty)
+          Success()
+        else if (ops.isEmpty) 
+          Failure("missing operator")
+        else if (nodes.size < 2)
+          Failure("missing an identifier")
+        else {
+          val op = ops.pop()
+          val r = nodes.pop()
+          val l = nodes.pop()
+          val node = LogicGroup(op, l, r)
+          addNode(node)
+          Success()
+        }
+    }
+    var seed: Validation[String, LogicalTree[Char]] = Success(EmptyTree())
+    val firstPass = logic.foldLeft(seed)((state, c) => c match {
+      case 'a' | 'n' | 'o' => state map (x => {opBuf.append(c); x})
+      case 'd' |       'r' => state >>= (x => {
+        val currentOp = opBuf.toString + c
+        opBuf = new StringBuffer()
+        if (notExpectingAnOperator)
+          Failure("Unexpected operator: " + currentOp)
+        else {
+          notExpectingAnOperator = true
+		  BooleanOperator.values.find(v => v.toString == currentOp.toUpperCase()) match {
+		    case None => Failure(currentOp + " is not a valid operator")
+            case Some(op) => {addOp(op); Success(x)}
+          }
+        }
+      })
+      case '(' => state map (x => {
+        notExpectingAnOperator = true
+        depth += 1;
+        nodesAtExprStart = nodesAtExprStart.updated(depth, nodes.size)
+        x
+      })
+      case ')' => state >>= (x => {
+        notExpectingAnOperator = false
+        val targetSize = nodesAtExprStart.getOrElse(depth, 0) + 1
+        depth -= 1;
+        if (depth < 0)
+          Failure("Unmatched right bracket")
+        else {
+          var res = endOfExpr map (_ => x)
+          while (res.isSuccess && nodes.size > targetSize) {
+            res = endOfExpr map (_ => x)
+          }
+          res
+        }
+      })
+      case ' ' => state
+      case code if validCodes.contains(code) => state >>= (x => {
+        notExpectingAnOperator = false
+        if (needsOperator)
+          Failure("Unexpected identifier: " + code)
+        else {
+          addNode(LogicalNode(code));
+          Success(x)
+        }
+      })
+      case _ => Failure("Illegal character in logic string: " + c)
+    })
+    // Mandatory end of expression evaluation
+    var res = firstPass >>= (_ => endOfExpr)
+    // Use up any available operations
+    while (res.isSuccess && ops.size > 0) {
+      res = endOfExpr
+    }
+    // report
+    res >>= (_ => if (nodes.size != 1) 
+        Failure("Logic does not have a single root") 
+      else if (depth != 0) 
+        Failure("Unmatched left bracket") 
+      else 
+        Success(nodes.pop))
+  }
+  
   def newQuery(s: Service, r: String): Validation[String, Query] = for {
-    root <- Path.parse(s.model, r)
-  } yield new Query(s, root.asInstanceOf[RootPath], Seq(), Seq(), Map(), EmptyTree(), Map())
+    path <- Path.parse(s.model, r)
+    root <- path match {case rp:RootPath => Success(rp); case _ => Failure(r + " does not represent a root path")}
+  } yield new Query(s, root, Seq(), Seq(), Map(), EmptyTree(), Map())
   
   def star(m: Model, ps: String, scm:Map[ReferencePath, Table]): Seq[String] = {
     val res = Path.parse(m, ps.replaceAll("\\.?\\*$", ""), scm)

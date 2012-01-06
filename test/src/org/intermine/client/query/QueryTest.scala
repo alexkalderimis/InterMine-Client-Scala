@@ -252,4 +252,27 @@ class QueryTest 	{
 	  ).fold(Assert.fail, q => Assert.assertEquals(Utility.trim(expected), q.toXML))
 	  
 	}
+	
+	@Test
+	def fromXMLNoConstraints() = {
+	  val src = <query model="testmodel" view="Employee.name Employee.age Employee.address.address Employee.department.name" 
+                       sortOrder="Employee.department.name asc Employee.age desc" constraintLogic="">
+			  		<join path="Employee.address" style="OUTER"/>
+			  		<constraint path="Employee.department.manager" type="CEO"/>
+			  	</query>
+	   
+	  Query.fromXML(s, src).fold(Assert.fail, println)
+	}
+	
+	
+	@Test
+	def fromBadXMLNoConstraints() = {
+	  val src = <query model="testmodel" view="Employee.name Employee.age Employee.address.address Employee.department.name" 
+                       sortOrder="Employee.department.name asc Employee.age desc" constraintLogic="">
+			  		<join path="Employee.address" style="OUTER"/>
+			  		<constraint path="Employee.department.manager" type="Badger"/>
+			  	</query>
+	   
+	  Query.fromXML(s, src).fold(println, q => Assert.fail("Expected failure - got: " + q))
+	}
 }
