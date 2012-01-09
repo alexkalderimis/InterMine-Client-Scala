@@ -1,6 +1,8 @@
 package org.intermine.client.query
 
+import scala.collection.mutable.Stack
 import scala.xml._
+
 import org.intermine.client.model.AttributePath
 import org.intermine.client.model.EndsInTable
 import org.intermine.client.model.Model
@@ -10,13 +12,13 @@ import org.intermine.client.model.RootPath
 import org.intermine.client.model.Table
 import org.intermine.client.query.Joins._
 import org.intermine.client.query.Sorting._
-import org.intermine.client.query.constraint._
-import org.intermine.client.Service
-import org.intermine.client.query.constraint.NonEmptyTree
 import org.intermine.client.query.constraint.LogicalTree._
+import org.intermine.client.query.constraint._
+import org.intermine.client.query.constraint.NonEmptyTree
+import org.intermine.client.Service
+
 import scalaz._
 import Validation.Monad._
-import scala.collection.mutable.Stack
 
 class Query(
     val service: Service, 
@@ -125,6 +127,7 @@ class Query(
     if (p == root.toString()) return Success(root)
     val deheaded = if (p.startsWith(root.toString())) p.substring(p.indexOf(".") + 1) else p 
     val parts = deheaded.split("\\.")
+    
     parts.foldLeft(success[String, Path](root))((path, part) => 
       path.fold(
           e => failure[String, Path]("Could not append " + part + ", because: " + e),
@@ -145,9 +148,10 @@ class Query(
   }
   
   def applyPaths(t: NonEmptyTree[Constraint[String]]): Validation[String, NonEmptyTree[Constraint[Path]]] = {
+    def err[T, X]: (T => (String => Validation[String, X])) = con => (e => Failure("Error validating " + con + ": " + e)) 
     val f: (Constraint[String] => Validation[String, Constraint[Path]]) = (a) => a match {
-      case AttributeConstraint(p, o, v) => for (path <- asPath(p)) yield AttributeConstraint(path, o, v)
-      case LookupConstraint(p, v, e) => for (path <- asPath(p)) yield LookupConstraint(path, v, e)
+      case AttributeConstraint(p, o, v) => asPath(p).fold(err(a), path => Success(AttributeConstraint(path, o, v)))
+      case LookupConstraint(p, v, e) => asPath(p).fold(err(a), path => Success(LookupConstraint(path, v, e)))
       case LoopConstraint(p, o, v) => for (path <- asPath(p); loopPath <- asPath(v)) yield LoopConstraint(path, o, loopPath)
       case MultiConstraint(p, o, vs) => for (path <- asPath(p)) yield MultiConstraint(path, o, vs)
       case ListConstraint(p, o, v) => for (path <- asPath(p)) yield ListConstraint(path, o, v)
@@ -191,12 +195,14 @@ object Query {
   
   import Scalaz._
   
+  val validCodes = 'A' to 'Z'
+  
   def fromXML(s: Service, src: String): Validation[String, Query] = {
     val xml = XML.loadString(src)
     fromXML(s, xml)
   }
   
-  def fromXML(s: Service, xml: Elem): Validation[String, Query] = {
+  def fromXML(s: Service, xml: scala.xml.Node): Validation[String, Query] = {
     // Parse out info
     val query = xml
     val views = (query \ "@view").text.split(" ")
@@ -211,9 +217,11 @@ object Query {
     val start = if (views.isEmpty) Failure("views are empty") else Success(views.first.split("\\.").first) >>= (r => s from r)
     val subclassed = subclassConstraints.foldLeft(start)((v, scc) => v >>= (q => scc match { case (p, t) => q.subclassing(p, t)}))
     val withViews  = subclassed >>= (_.select(views:_*))
+    
     val withOrder  = so match {
       case Array()    => withViews
-      case Array(soe) => withViews >>= (_.orderBy(soe))
+      case Array(soe) if !soe.isEmpty() => withViews >>= (_.orderBy(soe))
+      case Array(soe) if soe.isEmpty() => withViews
       case sos if sos.size % 2 == 0 => {
         var i = (0 until sos.size).iterator
         val (evens, odds) = sos.partition(x => i.next() % 2 == 0)
@@ -221,9 +229,72 @@ object Query {
       }
       case _ => Failure("Sort order has odd number of elements")
     }
+    
     val joined = outerjoins.foldLeft(withOrder)((v, oj) => v >>= (_.outerjoin(oj)))
-    val tree = toTree(constraintLogic)
-    joined
+    // Parse the constraints
+    var allocatedCodes: Set[Char] = Set()
+    val getCode: scala.xml.Node => Validation[String, Char] = e => (e \ "@code").text.firstOption match {
+      case Some(c) => {allocatedCodes += c; Success(c)}
+      case None    => {
+        validCodes.find(vc => !allocatedCodes.contains(vc)) match {
+          case Some(c) => {allocatedCodes += c; Success(c)}
+          case None => Failure("All valid codes have been allocated")
+        }
+      }
+    }
+     
+    val vs = logicalConstraints.map(n => (getCode(n) >>= (code => makeConstraint(n) map (con => code -> con))))
+    val constraintMap = if (vs.exists(_.isFailure))
+      Failure("Errors making constraints: " + (vs.filter(_.isFailure).map(_ ||| (e => e)).mkString("; ")))
+      else 
+      Success(Map(vs.map(_ | (('X', null))):_*))
+    
+    // The constraints, all treed up
+    val constraintTree = if (logicalConstraints.size == 1)
+      constraintMap map (m => LogicalNode(m.values.first))
+      else toTree(constraintLogic) >>=
+      (t => constraintMap >>= (cm => if (cm.keys.forall(k => t.hasNode(k))) Success(t) else Failure("Logic and constraints disagree"))) >>=
+      (t => constraintMap >>= (cm => Success(t map (c => cm(c)))))
+    
+    joined >>= (q => constraintTree >>= (tree => tree match {
+      case EmptyTree() => Success(q)
+      case net:NonEmptyTree[Constraint[String]] => q.where(net) 
+    }))
+  }
+  
+  def makeConstraint(node: scala.xml.Node): Validation[String, Constraint[String]] = {
+    val path = (node \ "@path").text
+    val op = (node \ "@op").text
+    val values = (node \ "value") map (_.text)
+    val value = (node \ "@value").text
+    val extraValue = (node \ "@extraValue").text
+    val loopPath = (node \ "@loopPath").text
+    op match {
+      case "IS NULL" => Success(NullConstraint(path, EqualTo()))
+      case "IS NOT NULL" => Success(NullConstraint(path, NotEqualTo()))
+      case "ONE OF" => Success(MultiConstraint(path, OneOf(), values))
+      case "NONE OF" => Success(MultiConstraint(path, NoneOf(), values))
+      case "LOOKUP" => Success(LookupConstraint(path, value, Option(extraValue)))
+      case "IN" => Success(ListConstraint(path, In(), value))
+      case "NOT IN" => Success(ListConstraint(path, NotIn(), value))
+      case "=" => if (loopPath != null && !loopPath.isEmpty()) 
+    	  			Success(LoopConstraint(path, Is(), loopPath))
+    	  		  else 
+    	  		    Success(AttributeConstraint(path, EqualTo(), value))
+      case "!=" => if (loopPath != null && !loopPath.isEmpty()) 
+    	  			Success(LoopConstraint(path, Isnt(), loopPath))
+    	  		  else
+    	  		    Success(AttributeConstraint(path, NotEqualTo(), value))
+      case ">" => Success(AttributeConstraint(path, GreaterThan(), value))
+      case "<" => Success(AttributeConstraint(path, LessThan(), value))
+      case ">=" => Success(AttributeConstraint(path, GreaterThanOrEqualTo(), value))
+      case "<=" => Success(AttributeConstraint(path, LessThanOrEqualTo(), value))
+      case "CONTAINS" => Success(AttributeConstraint(path, Contains(), value))
+      case "DOES NOT CONTAIN" => Success(AttributeConstraint(path, DoesntContain(), value))
+      case "LIKE" => Success(AttributeConstraint(path, Matches(), value))
+      case "NOT LIKE" => Success(AttributeConstraint(path, DoesntMatch(), value))
+      case _ => Failure("Illegal operator: " + op)
+    }
   }
   
   /**
@@ -239,7 +310,7 @@ object Query {
     // State
     val nodes: Stack[NonEmptyTree[Char]] = new Stack()
     val ops: Stack[BooleanOperator.BooleanOperator] = new Stack()
-    val validCodes = 'A' to 'Z'
+    
     // Helper closures
     def addNode(n: NonEmptyTree[Char]) = {nodes.push(n); needsOperator = nodes.size % 2 == 1}
     def addOp(o: BooleanOperator.BooleanOperator) = {ops.push(o); needsOperator = false}

@@ -14,7 +14,7 @@ class Table(unqualifiedName:String, parents:Seq[String], attrDescs : Seq[Attribu
       case Some(a) => Success(a)
       case None => (refDescs find ((r) => r.name == fieldName)) match {
         case Some(r) => Success(r)
-        case None => Failure("Could not find " + fieldName + " on " + name)
+        case None => Failure("Could not find '" + fieldName + "' on " + name)
       }
   }
   

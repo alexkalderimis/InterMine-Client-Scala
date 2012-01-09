@@ -264,6 +264,60 @@ class QueryTest 	{
 	  Query.fromXML(s, src).fold(Assert.fail, println)
 	}
 	
+	@Test
+	def fromXMLWithConstraints() = {
+	  val src = <query model="testmodel" view="Employee.name Employee.age Employee.address.address Employee.department.name" 
+                       sortOrder="Employee.department.name asc Employee.age desc" constraintLogic="A and B">
+			  		<join path="Employee.address" style="OUTER"/>
+			  		<constraint path="Employee.department.manager" type="CEO"/>
+			  		<constraint path="Employee.name" op="=" value="foo"/>
+			  		<constraint path="Employee" op="IN" value="Some List"/>
+			  	</query>
+	   
+	  Query.fromXML(s, src).fold(Assert.fail, println)
+	}
+	
+	@Test
+	def fromXMLWithConstraints2() = {
+	  val src = <query model="testmodel" view="Employee.name Employee.age Employee.address.address Employee.department.name" 
+                       sortOrder="Employee.department.name asc Employee.age desc" constraintLogic="A or B and C">
+			  		<join path="Employee.address" style="OUTER"/>
+			  		<constraint path="Employee.department.manager" type="CEO"/>
+			  		<constraint path="Employee.name" op="=" value="foo" code="C"/>
+			  		<constraint path="Employee" op="IN" value="Some List" code="A"/>
+                    <constraint path="Employee" op="NOT IN" value="Some List" code="B"/>
+			  	</query>
+	   
+	  Query.fromXML(s, src).fold(Assert.fail, println)
+	}
+	
+	@Test
+	def fromXMLBadConstraints() = {
+	  val src = <query model="testmodel" view="Employee.name Employee.age Employee.address.address Employee.department.name" 
+                       sortOrder="Employee.department.name asc Employee.age desc" constraintLogic="A or B and C">
+			  		<join path="Employee.address" style="OUTER"/>
+			  		<constraint path="Employee.department.manager" type="CEO"/>
+			  		<constraint path="Employee.name" op="=" value="foo" code="C"/>
+			  		<constraint path="Employee" op="Wibble" value="Some List" code="A"/>
+                    <constraint path="Employee" op="Flibble" value="Some List" code="B"/>
+			  	</query>
+	   
+	  Query.fromXML(s, src).fold(println, q => Assert.fail("Expected error - got: " + q))
+	}
+	
+	@Test
+	def disagreeingLogic() = {
+	  val src = <query model="testmodel" view="Employee.name Employee.age Employee.address.address Employee.department.name" 
+                       sortOrder="Employee.department.name asc Employee.age desc" constraintLogic="A or B">
+			  		<join path="Employee.address" style="OUTER"/>
+			  		<constraint path="Employee.department.manager" type="CEO"/>
+			  		<constraint path="Employee.name" op="=" value="foo" code="C"/>
+			  		<constraint path="Employee" op="IN" value="Some List" code="A"/>
+                    <constraint path="Employee" op="NOT IN" value="Some List" code="B"/>
+			  	</query>
+	   
+	  Query.fromXML(s, src).fold(println, q => Assert.fail("Expected failure - got: " + q))
+	}
 	
 	@Test
 	def fromBadXMLNoConstraints() = {

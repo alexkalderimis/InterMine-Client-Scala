@@ -4,17 +4,25 @@ import scalaz._
 import Scalaz._
 import org.intermine.client.query.constraint.BooleanOperator._
 
-sealed abstract class LogicalTree[A]
+sealed abstract class LogicalTree[A] {
+  def hasNode(n: A): Boolean
+}
 
-case class EmptyTree[A]() extends LogicalTree[A]
+case class EmptyTree[A]() extends LogicalTree[A] {
+  def hasNode(n: A) = false
+}
 
 sealed abstract class NonEmptyTree[A] extends LogicalTree[A] {
  def or(that: NonEmptyTree[A]) = LogicGroup(BooleanOperator.OR, this, that)
  def and(that: NonEmptyTree[A]) = LogicGroup(BooleanOperator.AND, this, that)
 }
 
-case class LogicGroup[A](op: BooleanOperator, l: NonEmptyTree[A], r: NonEmptyTree[A]) extends NonEmptyTree[A]
-case class LogicalNode[A](v: A) extends NonEmptyTree[A]
+case class LogicGroup[A](op: BooleanOperator, l: NonEmptyTree[A], r: NonEmptyTree[A]) extends NonEmptyTree[A] {
+  def hasNode(n: A) = l.hasNode(n) || r.hasNode(n)
+}
+case class LogicalNode[A](v: A) extends NonEmptyTree[A] {
+  def hasNode(n: A) = v == n
+}
 
 object LogicalTree {
 
