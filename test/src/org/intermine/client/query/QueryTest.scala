@@ -329,4 +329,36 @@ class QueryTest 	{
 	   
 	  Query.fromXML(s, src).fold(println, q => Assert.fail("Expected failure - got: " + q))
 	}
+	
+	@Test
+	def results(): Unit = {
+	  ( (s from "Employee")       >>=
+	    (_.select("name", "age", "department.name")) >>=
+	    (_.where( ("name"     |>=| "M") and ("name" |<=| "P") )) >>=
+	    (q => s getPage q))
+	    .fold(Assert.fail, rows => rows map (row => println(row(0) + " is " + row(1) + " and works in " + row(2))))
+	}
+	
+	@Test
+	def typedresults(): Unit = {
+	  ( (s from "Employee")                                      >>=
+	    (_.select("name", "age", "department.name"))             >>=
+	    (_.where( ("name"     |>=| "M") and ("name" |<=| "P") )) >>=
+	    (q => s getPage q))
+	    .fold(Assert.fail, rows => {
+	      for (p <- rows groupBy (_(2))) p match {
+	        case (dep, rs) => println(dep + ": " + (rs map (_(1).asInstanceOf[Int])).sum)
+	      }
+	      println("Total: " +  (rows map (_(1).asInstanceOf[Int])).sum)
+	    })
+	}
+	
+	@Test
+	def badresults(): Unit = {
+	  ( (s from "Employee")       >>=
+	    (_.select("name", "age", "department.name")) >>=
+	    (_.where( ("age"     |>=| "M") and ("name" |<=| "P") )) >>=
+	    (q => s getPage q))
+	    .fold(println, rows => Assert.fail("Expected and error - got: " + rows))
+	}
 }

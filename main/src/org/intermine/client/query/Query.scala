@@ -27,7 +27,7 @@ class Query(
     val sortOrder: Seq[Pair[AttributePath, SortDirection]], 
     val subclasses: Map[ReferencePath, Table], 
     val constraints: LogicalTree[Constraint[Path]],
-    val join: Map[ReferencePath, JoinStyle]) { 
+    val join: Map[ReferencePath, JoinStyle]) extends Queriable  { 
   
   import Scalaz._
   
@@ -171,6 +171,10 @@ class Query(
     combineValidations(validated)
   }
   
+  def asQueryParameters: Map[String, String] = Map("query" -> toXML.toString())
+  
+  def path = "/query/results"
+  
   def toXML : scala.xml.Node = scala.xml.Utility trim <query 
            model={service.model.getName} 
            view={ views.map(_.toString()).foldLeft("")((a, b) => if (a.isEmpty()) b else a + " " + b)}
@@ -206,7 +210,7 @@ object Query {
     // Parse out info
     val query = xml
     val views = (query \ "@view").text.split(" ")
-    val so = (query \ "@sortOrder").text.split(" ")
+    val so = for (soe <- (query \ "@sortOrder").text.split(" ") if !soe.isEmpty()) yield soe
     val constraintLogic = (query \ "@constraintLogic").text
     val modelName = (query \ "@model").text
     val outerjoins = for (e <- (query \ "join") if (e \ "@style").text == "OUTER") yield (e \ "@path").text
@@ -220,8 +224,7 @@ object Query {
     
     val withOrder  = so match {
       case Array()    => withViews
-      case Array(soe) if !soe.isEmpty() => withViews >>= (_.orderBy(soe))
-      case Array(soe) if soe.isEmpty() => withViews
+      case Array(soe) => withViews >>= (_.orderBy(soe))
       case sos if sos.size % 2 == 0 => {
         var i = (0 until sos.size).iterator
         val (evens, odds) = sos.partition(x => i.next() % 2 == 0)

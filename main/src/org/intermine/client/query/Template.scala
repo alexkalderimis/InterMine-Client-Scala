@@ -13,11 +13,18 @@ class Template(
     val query: Query)
 
 object Template {
+  
+  /**
+   * Parse a template from a string.
+   */
   def parseTemplate(s: Service, src: String): Validation[String, Template] = {
     val xml = XML.loadString(src)
     parseTemplate(s, xml)
   }
   
+  /**
+   * Parse a template from an XML node
+   */
   def parseTemplate(s: Service, src: scala.xml.Node): Validation[String, Template] = {
     val name = (src \ "@name").text
     val title = (src \ "@title").text
@@ -27,12 +34,14 @@ object Template {
     if (qs.size != 1) {
       Failure("Wrong number of query elements: " + qs.size)
     } else {
-      //for (q <- Query.fromXML(s, qs.first)) yield new Template(name, title, q)
       Query.fromXML(s, qs.first).fold(e => Failure("Error parsing " + name + "(" + src + "): " + e),
                                       q => Success(new Template(name, title, desc, comment, q)))
     }
   }
   
+  /**
+   * Parse a collection of templates.
+   */
   def parseTemplates(s: Service, src: String): Seq[Validation[String, Template]] = parseTemplates(s, XML.loadString(src))
   def parseTemplates(s: Service, src: Elem) = (src \ "template") map (e => parseTemplate(s, e))
 }

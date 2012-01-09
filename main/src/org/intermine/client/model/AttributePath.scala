@@ -2,7 +2,7 @@ package org.intermine.client.model
 import scalaz.Failure
 import scalaz.Success
 
-protected class AttributePath(model:Model, root:Table, refs:Seq[Reference], end:Attribute, subclasses:Map[ReferencePath, Table]) extends Path { 
+protected class AttributePath(model:Model, root:Table, refs:Seq[Reference], val end:Attribute, subclasses:Map[ReferencePath, Table]) extends Path { 
   
   override def toString = root.name + refs.foldLeft("")((ac, r) => ac + "." + r.name) + "." + end.name
   
