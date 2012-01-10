@@ -335,7 +335,7 @@ class QueryTest 	{
 	  ( (s from "Employee")       >>=
 	    (_.select("name", "age", "department.name")) >>=
 	    (_.where( ("name"     |>=| "M") and ("name" |<=| "P") )) >>=
-	    (q => s getPage q))
+	    (_.byPage))
 	    .fold(Assert.fail, rows => rows map (row => println(row(0) + " is " + row(1) + " and works in " + row(2))))
 	}
 	
@@ -344,11 +344,9 @@ class QueryTest 	{
 	  ( (s from "Employee")                                      >>=
 	    (_.select("name", "age", "department.name"))             >>=
 	    (_.where( ("name"     |>=| "M") and ("name" |<=| "P") )) >>=
-	    (q => s getPage q))
+	    (_.byPage))
 	    .fold(Assert.fail, rows => {
-	      for (p <- rows groupBy (_(2))) p match {
-	        case (dep, rs) => println(dep + ": " + (rs map (_(1).asInstanceOf[Int])).sum)
-	      }
+	      rows groupBy (_(2)) map {case (d, rs) => println(d + ": " + (rs map (_(1).asInstanceOf[Int])).sum)}
 	      println("Total: " +  (rows map (_(1).asInstanceOf[Int])).sum)
 	    })
 	}
@@ -358,7 +356,7 @@ class QueryTest 	{
 	  ( (s from "Employee")       >>=
 	    (_.select("name", "age", "department.name")) >>=
 	    (_.where( ("age"     |>=| "M") and ("name" |<=| "P") )) >>=
-	    (q => s getPage q))
+	    (_.byPage))
 	    .fold(println, rows => Assert.fail("Expected and error - got: " + rows))
 	}
 }

@@ -2,7 +2,6 @@ package org.intermine.client.query
 
 import scala.collection.mutable.Stack
 import scala.xml._
-
 import org.intermine.client.model.AttributePath
 import org.intermine.client.model.EndsInTable
 import org.intermine.client.model.Model
@@ -16,9 +15,9 @@ import org.intermine.client.query.constraint.LogicalTree._
 import org.intermine.client.query.constraint._
 import org.intermine.client.query.constraint.NonEmptyTree
 import org.intermine.client.Service
-
 import scalaz._
 import Validation.Monad._
+import org.intermine.client.results.Page
 
 class Query(
     val service: Service, 
@@ -174,6 +173,10 @@ class Query(
   def asQueryParameters: Map[String, String] = Map("query" -> toXML.toString())
   
   def path = "/query/results"
+    
+  def byPage(implicit page: Page) = service.getPage(this)(page)
+  
+  def all = service.getAll(this)
   
   def toXML : scala.xml.Node = scala.xml.Utility trim <query 
            model={service.model.getName} 
