@@ -1,0 +1,11 @@
+Implementation of A Web-Service Client for the InterMine API
+============================================================
+
+This project aims to have a functional API client that can:
+  * Create and run queries
+  * Create and use templates
+  * Read and use lists
+  * Request query summaries and counts
+  * Lazily iterate over result sets
+
+And all in idiomatic scala.
