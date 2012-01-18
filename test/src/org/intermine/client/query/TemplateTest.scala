@@ -1,20 +1,19 @@
 package org.intermine.client.query
 
+import scalaz.Validation.Monad._
+
 import org.junit.Assert
 import org.junit.Test
 import org.intermine.client.Service
 import org.intermine.client.query.constraint.Constraint._
 import org.intermine.client.query.Query._
-import scalaz._
-import Validation.Monad._
+
 import scala.xml.Utility
 
 class TemplateTest {
-  
-  import Scalaz._
-	
+
   val s = new Service("http://squirrel.flymine.org/intermine-test/service")
- 
+
   @Test
   def names() {
     val templates = s.templates

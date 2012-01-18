@@ -1,3 +1,4 @@
 main/bin
+examples/bin
 test/bin
 */.cache
